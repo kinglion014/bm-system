@@ -167,9 +167,10 @@ lib.callback.register('blackmarket:server:addTradeItem', function(source, tradeI
     if existingItem then
         existingItem.count = existingItem.count + count
     else
+        local itemData = exports.ox_inventory:Items(itemName)
         table.insert(itemsList, {
             name = itemName,
-            label = exports.ox_inventory:GetItemLabel(itemName) or itemName,
+            label = itemData and itemData.label or itemName,
             count = count
         })
     end
@@ -274,6 +275,20 @@ function ExecuteTrade(trade)
         if count < item.count then
             CancelTradeInternal(trade, 'Item removed during trade.')
             return false, 'Trade cancelled: Items were modified.'
+        end
+    end
+
+    for _, item in ipairs(trade.player1Items) do
+        if not exports.ox_inventory:CanCarryItem(trade.player2, item.name, item.count) then
+            CancelTradeInternal(trade, 'Trade cancelled: Receiving inventory cannot carry the offered items.')
+            return false, 'Trade cancelled: Receiving inventory cannot carry the offered items.'
+        end
+    end
+
+    for _, item in ipairs(trade.player2Items) do
+        if not exports.ox_inventory:CanCarryItem(trade.player1, item.name, item.count) then
+            CancelTradeInternal(trade, 'Trade cancelled: Receiving inventory cannot carry the offered items.')
+            return false, 'Trade cancelled: Receiving inventory cannot carry the offered items.'
         end
     end
     

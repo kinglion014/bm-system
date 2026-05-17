@@ -243,7 +243,8 @@ function ConfirmTrade(tradeId)
         StopPoliceCheck()
         currentTrade = nil
     else
-        Notify('Trading', message or 'Trade failed.', 'error')
+        local notifyType = message == 'Waiting for partner to confirm.' and 'inform' or 'error'
+        Notify('Trading', message or 'Trade failed.', notifyType)
     end
 end
 

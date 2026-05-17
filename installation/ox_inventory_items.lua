@@ -1,5 +1,6 @@
 -- Add these entries to ox_inventory/data/items.lua inside the returned table.
 -- Weapon entries used by this resource already live in ox_inventory/data/weapons.lua.
+-- This server already has lockpick, meth, oxy, and radio in ox_inventory/data/items.lua.
 
 ['weed_bag'] = {
     label = 'Weed Bag',
