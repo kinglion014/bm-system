@@ -3,6 +3,7 @@
 -- =============================================================================
 
 local blackMarketPed = nil
+local blackMarketTargetAdded = false
 
 -- =============================================================================
 -- UTILITY FUNCTIONS
@@ -24,6 +25,59 @@ local function GetStreetCred()
     return BMInteger(cred, 0)
 end
 
+local function LoadPedModel(model, timeout)
+    if not IsModelInCdimage(model) or not IsModelValid(model) then
+        BMLog('ERROR', 'Invalid black market ped model: %s', BMString(model))
+        return false
+    end
+
+    RequestModel(model)
+
+    local startedAt = GetGameTimer()
+    while not HasModelLoaded(model) do
+        if GetGameTimer() - startedAt > BMInteger(timeout, 5000) then
+            BMLog('ERROR', 'Timed out loading black market ped model: %s', BMString(model))
+            return false
+        end
+
+        Wait(50)
+    end
+
+    return true
+end
+
+local function GetSafeSpawnCoords(coords, attempts)
+    RequestCollisionAtCoord(coords.x, coords.y, coords.z)
+
+    local spawnZ = coords.z
+    for _ = 1, BMInteger(attempts, 25) do
+        local foundGround, groundZ = GetGroundZFor_3dCoord(coords.x, coords.y, coords.z + 2.0, false)
+        if foundGround then
+            spawnZ = groundZ
+            break
+        end
+
+        Wait(100)
+    end
+
+    return coords.x, coords.y, spawnZ, coords.w or 0.0
+end
+
+local function DeleteBlackMarketPed()
+    if blackMarketPed and DoesEntityExist(blackMarketPed) then
+        if blackMarketTargetAdded then
+            pcall(function()
+                exports.ox_target:removeLocalEntity(blackMarketPed, { 'blackmarket_open', 'blackmarket_checkcred' })
+            end)
+        end
+
+        DeleteEntity(blackMarketPed)
+    end
+
+    blackMarketPed = nil
+    blackMarketTargetAdded = false
+end
+
 -- =============================================================================
 -- BLACK MARKET NPC SPAWNING
 -- =============================================================================
@@ -36,26 +90,36 @@ local function CreateBlackMarketPed()
     local marketConfig = Config.BlackMarket or {}
     local coords = marketConfig.coords
     local model = marketConfig.npcModel
+    local npcSettings = type(marketConfig.npc) == 'table' and marketConfig.npc or {}
 
     if not coords or not model then
         BMLog('ERROR', 'Black market NPC cannot spawn; missing coords or npcModel in config.')
         return
     end
 
-    RequestModel(model)
-    
-    while not HasModelLoaded(model) do
-        Wait(100)
+    if not LoadPedModel(model, npcSettings.spawnTimeout) then
+        return
     end
 
-    blackMarketPed = CreatePed(4, model, coords.x, coords.y, coords.z, coords.w, false, true)
+    local x, y, z, heading = GetSafeSpawnCoords(coords, npcSettings.groundCheckAttempts)
+    blackMarketPed = CreatePed(4, model, x, y, z, heading, false, true)
+
+    if not blackMarketPed or blackMarketPed == 0 or not DoesEntityExist(blackMarketPed) then
+        BMLog('ERROR', 'Failed to create black market dealer ped.')
+        SetModelAsNoLongerNeeded(model)
+        blackMarketPed = nil
+        return
+    end
     
     SetEntityInvincible(blackMarketPed, true)
     SetBlockingOfNonTemporaryEvents(blackMarketPed, true)
-    FreezeEntityPosition(blackMarketPed, true)
     SetPedFleeAttributes(blackMarketPed, 0, false)
+    SetPedDiesWhenInjured(blackMarketPed, false)
+    SetPedCanRagdoll(blackMarketPed, false)
+    SetEntityHeading(blackMarketPed, heading)
+    SetEntityCoordsNoOffset(blackMarketPed, x, y, z, false, false, false)
+    FreezeEntityPosition(blackMarketPed, true)
 
-    local npcSettings = type(marketConfig.npc) == 'table' and marketConfig.npc or {}
     local alpha = BMInteger(npcSettings.alpha, 255)
     if alpha >= 0 and alpha < 255 then
         SetEntityAlpha(blackMarketPed, alpha, false)
@@ -87,8 +151,10 @@ local function CreateBlackMarketPed()
             end
         }
     })
+    blackMarketTargetAdded = true
+    SetModelAsNoLongerNeeded(model)
     
-    DebugPrint('NPC spawned at:', coords)
+    DebugPrint(('NPC spawned at %.2f %.2f %.2f heading %.2f'):format(x, y, z, heading))
 end
 
 -- Tracks whether this client is close enough for the server to apply a fake visible job.
@@ -307,6 +373,16 @@ end)
 CreateThread(function()
     Wait(1000)
     CreateBlackMarketPed()
+
+    while true do
+        Wait(15000)
+
+        if not blackMarketPed or not DoesEntityExist(blackMarketPed) then
+            blackMarketPed = nil
+            blackMarketTargetAdded = false
+            CreateBlackMarketPed()
+        end
+    end
 end)
 
 CreateThread(function()
@@ -328,9 +404,7 @@ end)
 -- Cleanup on resource stop
 AddEventHandler('onResourceStop', function(resourceName)
     if resourceName == GetCurrentResourceName() then
-        if blackMarketPed and DoesEntityExist(blackMarketPed) then
-            DeleteEntity(blackMarketPed)
-        end
+        DeleteBlackMarketPed()
 
         if disguiseActive then
             TriggerServerEvent('blackmarket:server:setDisguise', false)

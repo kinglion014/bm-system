@@ -6,13 +6,15 @@ Config = {}
 
 Config.BlackMarket = {
     -- Secret location coordinates
-    coords = vector4(113.42, -992.57, 29.28, 280.5), -- Hidden alley location
+    coords = vector4(713.84, -967.71, 30.40, 267.75), -- Hidden La Mesa warehouse back door
     npcModel = `g_m_m_chicold_01`, -- Gang member model
     targetDistance = 2.5,
     serverValidationDistance = 5.0, -- Server-side anti-cheat distance for buy/sell events
     npc = {
-        alpha = 185, -- Slightly transparent so the dealer is harder to spot
-        scenario = 'WORLD_HUMAN_SMOKING'
+        alpha = 255,
+        scenario = 'WORLD_HUMAN_SMOKING',
+        spawnTimeout = 5000,
+        groundCheckAttempts = 25
     },
     blip = {
         enabled = false, -- Keep it secret - no blip by default
