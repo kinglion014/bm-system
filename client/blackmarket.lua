@@ -9,16 +9,19 @@ local blackMarketPed = nil
 -- =============================================================================
 
 local function Notify(title, description, type, duration)
+    local defaultDuration = Config.Notify and Config.Notify.durations and Config.Notify.durations.default or 5000
+
     lib.notify({
-        title = title,
-        description = description,
+        title = BMString(title, 'Black Market'),
+        description = BMString(description),
         type = type or 'inform',
-        duration = duration or Config.Notify.durations.default
+        duration = duration or defaultDuration
     })
 end
 
 local function GetStreetCred()
-    return lib.callback.await('blackmarket:server:getCred', false)
+    local cred = lib.callback.await('blackmarket:server:getCred', false)
+    return BMInteger(cred, 0)
 end
 
 -- =============================================================================
@@ -62,7 +65,7 @@ local function CreateBlackMarketPed()
             label = 'Check Street Cred',
             distance = 2.5,
             onSelect = function()
-                local cred = tonumber(GetStreetCred()) or 0
+                local cred = GetStreetCred()
                 Notify('Street Cred', string.format('Your reputation: %d/100', cred), 'inform')
             end
         }
@@ -76,10 +79,10 @@ end
 -- =============================================================================
 
 function OpenBlackMarketMenu()
-    local cred = tonumber(GetStreetCred()) or 0
+    local cred = GetStreetCred()
     local items = lib.callback.await('blackmarket:server:getItems', false)
     
-    if not items then
+    if type(items) ~= 'table' then
         Notify('Black Market', 'Unable to connect to supplier.', 'error')
         return
     end
@@ -93,17 +96,17 @@ function OpenBlackMarketMenu()
     }
     
     for _, item in ipairs(items) do
-        local stock = tonumber(item.stock) or 0
-        local requiredCred = tonumber(item.requiredCred) or 0
-        local currentPrice = tonumber(item.currentPrice or item.basePrice) or 0
-        local category = item.category or 'contraband'
+        local stock = BMInteger(item.stock, 0)
+        local requiredCred = BMInteger(item.requiredCred, 0)
+        local currentPrice = BMInteger(item.currentPrice or item.basePrice, 0)
+        local category = BMString(item.category, 'contraband')
 
         if stock > 0 then
             local cat = categories[category]
             if cat then
                 local menuItem = {
                     name = item.name,
-                    label = item.label or item.name,
+                    label = BMString(item.label, BMString(item.name, 'Unknown Item')),
                     category = category,
                     stock = stock,
                     currentPrice = currentPrice,
@@ -145,6 +148,15 @@ function OpenBlackMarketMenu()
             })
         end
     end
+
+    if #mainMenu.options == 0 then
+        table.insert(mainMenu.options, {
+            title = 'No stock available',
+            description = 'The supplier has nothing for sale right now.',
+            icon = 'box-open',
+            disabled = true
+        })
+    end
     
     -- Register submenus
     for catName, catData in pairs(categories) do
@@ -163,20 +175,27 @@ function OpenBlackMarketMenu()
 end
 
 function OpenPurchaseMenu(item)
-    local cred = tonumber(GetStreetCred()) or 0
-    local stock = tonumber(item.stock) or 0
-    local price = tonumber(item.currentPrice) or 0
+    local cred = GetStreetCred()
+    local stock = BMInteger(item.stock, 0)
+    local price = BMInteger(item.currentPrice, 0)
+
+    if not item.name or stock <= 0 then
+        Notify('Black Market', 'This item is no longer available.', 'error')
+        OpenBlackMarketMenu()
+        return
+    end
     
     -- Apply reputation discount
-    for _, mod in ipairs(Config.Reputation.priceModifiers) do
-        if cred >= mod.minCred then
-            price = math.floor((tonumber(item.currentPrice) or 0) * mod.modifier)
+    local modifiers = Config.Reputation and type(Config.Reputation.priceModifiers) == 'table' and Config.Reputation.priceModifiers or {}
+    for _, mod in ipairs(modifiers) do
+        if cred >= BMInteger(mod.minCred, 0) then
+            price = math.floor(BMNumber(item.currentPrice, 0) * BMNumber(mod.modifier, 1.0))
         end
     end
     
     lib.registerContext({
         id = 'blackmarket_purchase',
-        title = item.label,
+        title = BMString(item.label, 'Black Market Item'),
         options = {
             {
                 title = 'Purchase',
@@ -196,7 +215,8 @@ function OpenPurchaseMenu(item)
                     })
                     
                     if input then
-                        local qty = tonumber(input[1]) or 1
+                        local qty = BMInteger(input[1], 1)
+                        qty = math.max(1, math.min(qty, stock))
                         TriggerServerEvent('blackmarket:server:buyItem', item.name, qty)
                     end
                 end
@@ -223,7 +243,7 @@ RegisterCommand('blackmarket', function()
 end, false)
 
 RegisterCommand('mycred', function()
-    local cred = tonumber(GetStreetCred()) or 0
+    local cred = GetStreetCred()
     Notify('Street Cred', string.format('Your reputation: %d/100', cred), 'inform')
 end, false)
 

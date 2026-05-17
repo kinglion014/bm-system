@@ -2,21 +2,22 @@
 -- SERVER LOGGING SYSTEM
 -- =============================================================================
 
-local LogFile = Config.Trading.logFile or 'trades.log'
+local LogFile = Config.Trading and Config.Trading.logFile or 'trades.log'
 
 -- =============================================================================
 -- LOG FUNCTIONS
 -- =============================================================================
 
 function LogTrade(data)
+    data = data or {}
     local timestamp = os.date('%Y-%m-%d %H:%M:%S')
     local logEntry = string.format('[%s] TRADE: %s (ID:%d) <-> %s (ID:%d) | Items: %s\n',
         timestamp,
-        data.player1Name or 'Unknown',
-        data.player1Id or 0,
-        data.player2Name or 'Unknown',
-        data.player2Id or 0,
-        data.itemsSummary or 'N/A'
+        BMString(data.player1Name, 'Unknown'),
+        BMInteger(data.player1Id, 0),
+        BMString(data.player2Name, 'Unknown'),
+        BMInteger(data.player2Id, 0),
+        BMString(data.itemsSummary, 'N/A')
     )
     
     -- Append to log file
@@ -30,14 +31,15 @@ function LogTrade(data)
 end
 
 function LogPurchase(data)
+    data = data or {}
     local timestamp = os.date('%Y-%m-%d %H:%M:%S')
     local logEntry = string.format('[%s] PURCHASE: %s (ID:%d) bought x%d %s for $%d\n',
         timestamp,
-        data.playerName or 'Unknown',
-        data.playerId or 0,
-        data.quantity or 0,
-        data.itemName or 'Unknown',
-        data.totalPrice or 0
+        BMString(data.playerName, 'Unknown'),
+        BMInteger(data.playerId, 0),
+        BMInteger(data.quantity, 0),
+        BMString(data.itemName, 'Unknown'),
+        BMInteger(data.totalPrice, 0)
     )
     
     local existingLog = LoadResourceFile(GetCurrentResourceName(), LogFile) or ''
@@ -53,7 +55,7 @@ function LogEvent(eventType, data)
     local timestamp = os.date('%Y-%m-%d %H:%M:%S')
     local logEntry = string.format('[%s] %s: %s\n',
         timestamp,
-        eventType:upper(),
+        BMString(eventType, 'event'):upper(),
         json.encode(data)
     )
     

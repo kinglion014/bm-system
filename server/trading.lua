@@ -12,7 +12,7 @@ local TradeIdCounter = 0
 -- =============================================================================
 
 lib.callback.register('blackmarket:server:initiateTrade', function(source, targetId)
-    targetId = tonumber(targetId)
+    targetId = BMInteger(targetId, 0)
     
     if not targetId or targetId == source then
         return false
@@ -63,7 +63,11 @@ end)
 
 RegisterNetEvent('blackmarket:server:acceptTrade', function(senderId)
     local source = source
-    senderId = tonumber(senderId)
+    senderId = BMInteger(senderId, 0)
+
+    if senderId <= 0 then
+        return
+    end
     
     local requestId = senderId .. '_' .. source
     
@@ -118,6 +122,7 @@ end)
 
 RegisterNetEvent('blackmarket:server:declineTrade', function(senderId)
     local source = source
+    senderId = BMInteger(senderId, 0)
     local requestId = senderId .. '_' .. source
     
     if PendingRequests[requestId] then
@@ -133,10 +138,10 @@ end)
 
 lib.callback.register('blackmarket:server:addTradeItem', function(source, tradeId, itemName, count)
     local playerTradeId = ActiveTrades[source]
-    tradeId = tonumber(tradeId)
-    count = tonumber(count) or 0
+    tradeId = BMInteger(tradeId, 0)
+    count = BMInteger(count, 0)
     
-    if count <= 0 or not playerTradeId or playerTradeId ~= tradeId then
+    if count <= 0 or not itemName or not playerTradeId or playerTradeId ~= tradeId then
         return false
     end
     
@@ -146,7 +151,7 @@ lib.callback.register('blackmarket:server:addTradeItem', function(source, tradeI
     end
     
     -- Check item ownership
-    local itemCount = exports.ox_inventory:GetItemCount(source, itemName)
+    local itemCount = BMInteger(exports.ox_inventory:GetItemCount(source, itemName), 0)
     if itemCount < count then
         return false
     end
@@ -165,12 +170,16 @@ lib.callback.register('blackmarket:server:addTradeItem', function(source, tradeI
     end
     
     if existingItem then
-        existingItem.count = existingItem.count + count
+        existingItem.count = BMInteger(existingItem.count, 0) + count
     else
+        if #itemsList >= BMInteger(Config.Trading.maxItemsPerTrade, 10) then
+            return false
+        end
+
         local itemData = exports.ox_inventory:Items(itemName)
         table.insert(itemsList, {
             name = itemName,
-            label = itemData and itemData.label or itemName,
+            label = itemData and itemData.label or BMString(itemName, 'Unknown Item'),
             count = count
         })
     end
@@ -187,8 +196,8 @@ end)
 
 lib.callback.register('blackmarket:server:removeTradeItem', function(source, tradeId, itemName, count)
     local playerTradeId = ActiveTrades[source]
-    tradeId = tonumber(tradeId)
-    count = tonumber(count) or 0
+    tradeId = BMInteger(tradeId, 0)
+    count = BMInteger(count, 0)
     
     if count <= 0 or not playerTradeId or playerTradeId ~= tradeId then
         return false
@@ -204,10 +213,11 @@ lib.callback.register('blackmarket:server:removeTradeItem', function(source, tra
     
     for i, item in ipairs(itemsList) do
         if item.name == itemName then
-            if count >= item.count then
+            local currentCount = BMInteger(item.count, 0)
+            if count >= currentCount then
                 table.remove(itemsList, i)
             else
-                item.count = item.count - count
+                item.count = currentCount - count
             end
             break
         end
@@ -229,7 +239,7 @@ end)
 
 lib.callback.register('blackmarket:server:confirmTrade', function(source, tradeId)
     local playerTradeId = ActiveTrades[source]
-    tradeId = tonumber(tradeId)
+    tradeId = BMInteger(tradeId, 0)
     
     if not playerTradeId or playerTradeId ~= tradeId then
         return false, 'Invalid trade.'
@@ -261,32 +271,69 @@ lib.callback.register('blackmarket:server:confirmTrade', function(source, tradeI
 end)
 
 function ExecuteTrade(trade)
+    local movedItems = {}
+
+    local function rollbackMovedItems()
+        for i = #movedItems, 1, -1 do
+            local moved = movedItems[i]
+            exports.ox_inventory:RemoveItem(moved.to, moved.name, moved.count)
+            exports.ox_inventory:AddItem(moved.from, moved.name, moved.count)
+        end
+    end
+
+    local function moveTradeItem(fromPlayer, toPlayer, item)
+        local count = BMInteger(item.count, 0)
+        if count <= 0 then return true end
+
+        if not exports.ox_inventory:RemoveItem(fromPlayer, item.name, count) then
+            return false
+        end
+
+        if not exports.ox_inventory:AddItem(toPlayer, item.name, count) then
+            exports.ox_inventory:AddItem(fromPlayer, item.name, count)
+            return false
+        end
+
+        table.insert(movedItems, {
+            from = fromPlayer,
+            to = toPlayer,
+            name = item.name,
+            count = count
+        })
+
+        return true
+    end
+
     -- Validate all items still exist
     for _, item in ipairs(trade.player1Items) do
-        local count = exports.ox_inventory:GetItemCount(trade.player1, item.name)
-        if count < item.count then
+        local count = BMInteger(exports.ox_inventory:GetItemCount(trade.player1, item.name), 0)
+        local itemCount = BMInteger(item.count, 0)
+        if count < itemCount then
             CancelTradeInternal(trade, 'Item removed during trade.')
             return false, 'Trade cancelled: Items were modified.'
         end
     end
     
     for _, item in ipairs(trade.player2Items) do
-        local count = exports.ox_inventory:GetItemCount(trade.player2, item.name)
-        if count < item.count then
+        local count = BMInteger(exports.ox_inventory:GetItemCount(trade.player2, item.name), 0)
+        local itemCount = BMInteger(item.count, 0)
+        if count < itemCount then
             CancelTradeInternal(trade, 'Item removed during trade.')
             return false, 'Trade cancelled: Items were modified.'
         end
     end
 
     for _, item in ipairs(trade.player1Items) do
-        if not exports.ox_inventory:CanCarryItem(trade.player2, item.name, item.count) then
+        local count = BMInteger(item.count, 0)
+        if count > 0 and not exports.ox_inventory:CanCarryItem(trade.player2, item.name, count) then
             CancelTradeInternal(trade, 'Trade cancelled: Receiving inventory cannot carry the offered items.')
             return false, 'Trade cancelled: Receiving inventory cannot carry the offered items.'
         end
     end
 
     for _, item in ipairs(trade.player2Items) do
-        if not exports.ox_inventory:CanCarryItem(trade.player1, item.name, item.count) then
+        local count = BMInteger(item.count, 0)
+        if count > 0 and not exports.ox_inventory:CanCarryItem(trade.player1, item.name, count) then
             CancelTradeInternal(trade, 'Trade cancelled: Receiving inventory cannot carry the offered items.')
             return false, 'Trade cancelled: Receiving inventory cannot carry the offered items.'
         end
@@ -294,14 +341,20 @@ function ExecuteTrade(trade)
     
     -- Transfer items player1 -> player2
     for _, item in ipairs(trade.player1Items) do
-        exports.ox_inventory:RemoveItem(trade.player1, item.name, item.count)
-        exports.ox_inventory:AddItem(trade.player2, item.name, item.count)
+        if not moveTradeItem(trade.player1, trade.player2, item) then
+            rollbackMovedItems()
+            CancelTradeInternal(trade, 'Trade cancelled: Item transfer failed.')
+            return false, 'Trade cancelled: Item transfer failed.'
+        end
     end
     
     -- Transfer items player2 -> player1
     for _, item in ipairs(trade.player2Items) do
-        exports.ox_inventory:RemoveItem(trade.player2, item.name, item.count)
-        exports.ox_inventory:AddItem(trade.player1, item.name, item.count)
+        if not moveTradeItem(trade.player2, trade.player1, item) then
+            rollbackMovedItems()
+            CancelTradeInternal(trade, 'Trade cancelled: Item transfer failed.')
+            return false, 'Trade cancelled: Item transfer failed.'
+        end
     end
     
     -- Add reputation to both players
@@ -314,10 +367,10 @@ function ExecuteTrade(trade)
     
     local itemsSummary = {}
     for _, item in ipairs(trade.player1Items) do
-        table.insert(itemsSummary, string.format('%s(x%d)', item.label, item.count))
+        table.insert(itemsSummary, string.format('%s(x%d)', BMString(item.label, item.name), BMInteger(item.count, 0)))
     end
     for _, item in ipairs(trade.player2Items) do
-        table.insert(itemsSummary, string.format('%s(x%d)', item.label, item.count))
+        table.insert(itemsSummary, string.format('%s(x%d)', BMString(item.label, item.name), BMInteger(item.count, 0)))
     end
     
     LogTrade({
@@ -349,7 +402,7 @@ end
 RegisterNetEvent('blackmarket:server:cancelTrade', function(tradeId)
     local source = source
     local playerTradeId = ActiveTrades[source]
-    tradeId = tonumber(tradeId)
+    tradeId = BMInteger(tradeId, 0)
     
     if playerTradeId and playerTradeId == tradeId then
         local trade = GetTradeById(tradeId)
@@ -373,7 +426,7 @@ end
 -- =============================================================================
 
 function GetTradeById(tradeId)
-    return Trades[tonumber(tradeId)]
+    return Trades[BMInteger(tradeId, 0)]
 end
 
 function UpdateTradeClients(trade)

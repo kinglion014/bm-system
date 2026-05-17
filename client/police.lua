@@ -22,6 +22,7 @@ function StartPoliceCheck()
             local myCoords = GetEntityCoords(PlayerPedId())
             local policeNearby = false
             local nearbyCount = 0
+            local alertRadius = BMNumber(Config.Police.alertRadius, 100.0)
             
             for _, player in ipairs(players) do
                 local serverId = GetPlayerServerId(player)
@@ -29,7 +30,7 @@ function StartPoliceCheck()
                 local coords = GetEntityCoords(ped)
                 local dist = #(myCoords - coords)
                 
-                if dist <= Config.Police.alertRadius then
+                if dist <= alertRadius then
                     local isPolice = lib.callback.await('blackmarket:server:isPolice', false, serverId)
                     
                     if isPolice then
@@ -41,7 +42,8 @@ function StartPoliceCheck()
             
             if policeNearby then
                 -- Flash warning on screen
-                lib.showTextUI(Config.Police.messages.dangerDetected .. string.format(' (%d nearby)', nearbyCount), {
+                local warning = BMString(Config.Police.messages.dangerDetected, 'WARNING: Police activity detected nearby!')
+                lib.showTextUI(warning .. string.format(' (%d nearby)', nearbyCount), {
                     position = 'top-center',
                     icon = 'triangle-exclamation',
                     iconColor = 'red',
@@ -58,7 +60,7 @@ function StartPoliceCheck()
                 lib.hideTextUI()
             end
             
-            Wait(Config.Police.checkInterval)
+            Wait(BMInteger(Config.Police.checkInterval, 1000))
         end
         
         lib.hideTextUI()
@@ -80,6 +82,7 @@ RegisterCommand('checkpolice', function()
     local myCoords = GetEntityCoords(PlayerPedId())
     local policeCount = 0
     local policeNames = {}
+    local alertRadius = BMNumber(Config.Police.alertRadius, 100.0)
     
     for _, player in ipairs(players) do
         local serverId = GetPlayerServerId(player)
@@ -87,7 +90,7 @@ RegisterCommand('checkpolice', function()
         local coords = GetEntityCoords(ped)
         local dist = #(myCoords - coords)
         
-        if dist <= Config.Police.alertRadius then
+        if dist <= alertRadius then
             local isPolice = lib.callback.await('blackmarket:server:isPolice', false, serverId)
             
             if isPolice then
@@ -107,7 +110,7 @@ RegisterCommand('checkpolice', function()
     else
         lib.notify({
             title = 'Police Detection',
-            description = Config.Police.messages.safeToTrade,
+            description = BMString(Config.Police.messages.safeToTrade, 'Area appears clear.'),
             type = 'success',
             duration = 3000
         })

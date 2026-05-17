@@ -7,7 +7,7 @@
 -- =============================================================================
 
 lib.callback.register('blackmarket:server:getCred', function(source)
-    return GetPlayerCred(source)
+    return BMInteger(GetPlayerCred(source), 0)
 end)
 
 lib.callback.register('blackmarket:server:getItems', function(source)
@@ -20,12 +20,13 @@ lib.callback.register('blackmarket:server:getInventory', function(source)
     
     if inventory then
         for _, item in pairs(inventory) do
-            if item.count > 0 then
+            local count = BMInteger(item.count, 0)
+            if count > 0 then
                 local itemData = exports.ox_inventory:Items(item.name)
                 table.insert(items, {
                     name = item.name,
-                    label = itemData and itemData.label or item.name,
-                    count = item.count
+                    label = itemData and itemData.label or BMString(item.name, 'Unknown Item'),
+                    count = count
                 })
             end
         end
@@ -35,8 +36,8 @@ lib.callback.register('blackmarket:server:getInventory', function(source)
 end)
 
 lib.callback.register('blackmarket:server:isPolice', function(source, targetId)
-    targetId = tonumber(targetId)
-    if not targetId then return false end
+    targetId = BMInteger(targetId, 0)
+    if targetId <= 0 then return false end
 
     local job = GetPlayerJob(targetId)
     if not job then return false end
@@ -45,8 +46,11 @@ lib.callback.register('blackmarket:server:isPolice', function(source, targetId)
         return false
     end
 
-    return Config.Police.policeJobs[job.name] == true
-        or Config.Police.policeJobTypes[job.type] == true
+    local policeJobs = type(Config.Police.policeJobs) == 'table' and Config.Police.policeJobs or {}
+    local policeJobTypes = type(Config.Police.policeJobTypes) == 'table' and Config.Police.policeJobTypes or {}
+
+    return policeJobs[job.name] == true
+        or policeJobTypes[job.type] == true
 end)
 
 -- =============================================================================
@@ -55,7 +59,7 @@ end)
 
 RegisterNetEvent('blackmarket:server:buyItem', function(itemName, quantity)
     local playerId = source
-    quantity = tonumber(quantity) or 1
+    quantity = BMInteger(quantity, 1)
     
     if quantity <= 0 then
         TriggerClientEvent('blackmarket:client:notify', playerId, 'Black Market', 'Invalid quantity', 'error')
@@ -70,7 +74,7 @@ RegisterNetEvent('blackmarket:server:buyItem', function(itemName, quantity)
     end
     
     -- Check stock
-    if itemData.stock < quantity then
+    if BMInteger(itemData.stock, 0) < quantity then
         TriggerClientEvent('blackmarket:client:notify', playerId, 'Black Market', 'Not enough stock', 'error')
         return
     end
@@ -86,8 +90,8 @@ RegisterNetEvent('blackmarket:server:buyItem', function(itemName, quantity)
     local totalPrice = finalPrice * quantity
     
     -- Check if player has enough money
-    local money = exports.ox_inventory:GetItemCount(playerId, 'money') or 0
-    local blackMoney = exports.ox_inventory:GetItemCount(playerId, 'black_money') or 0
+    local money = BMInteger(exports.ox_inventory:GetItemCount(playerId, 'money'), 0)
+    local blackMoney = BMInteger(exports.ox_inventory:GetItemCount(playerId, 'black_money'), 0)
     
     -- Prefer black money for black market purchases
     local useBlackMoney = blackMoney >= totalPrice
@@ -100,6 +104,12 @@ RegisterNetEvent('blackmarket:server:buyItem', function(itemName, quantity)
     
     -- Process purchase
     local currency = useBlackMoney and 'black_money' or 'money'
+
+    if not exports.ox_inventory:CanCarryItem(playerId, itemName, quantity) then
+        TriggerClientEvent('blackmarket:client:notify', playerId, 'Black Market', 'Not enough inventory space', 'error')
+        return
+    end
+
     local removed = exports.ox_inventory:RemoveItem(playerId, currency, totalPrice)
     
     if not removed then
@@ -118,7 +128,12 @@ RegisterNetEvent('blackmarket:server:buyItem', function(itemName, quantity)
     end
     
     -- Consume stock
-    ConsumeStock(itemName, quantity)
+    if not ConsumeStock(itemName, quantity) then
+        exports.ox_inventory:RemoveItem(playerId, itemName, quantity)
+        exports.ox_inventory:AddItem(playerId, currency, totalPrice)
+        TriggerClientEvent('blackmarket:client:notify', playerId, 'Black Market', 'Stock changed before purchase completed', 'error')
+        return
+    end
     
     -- Award reputation
     AwardPurchaseCred(playerId, itemData.category)
@@ -133,11 +148,11 @@ RegisterNetEvent('blackmarket:server:buyItem', function(itemName, quantity)
     
     -- Notify player
     TriggerClientEvent('blackmarket:client:notify', playerId, 'Black Market', 
-        string.format('Purchased %dx %s for $%d', quantity, itemData.label, totalPrice), 'success')
+        string.format('Purchased %dx %s for $%d', quantity, BMString(itemData.label, itemName), totalPrice), 'success')
     
     if Config.Debug then
         print(string.format('[BlackMarket] %s bought %dx %s for $%d', 
-            GetPlayerName(playerId), quantity, itemName, totalPrice))
+            BMString(GetPlayerName(playerId), 'Unknown'), quantity, BMString(itemName, 'unknown'), totalPrice))
     end
 end)
 
@@ -152,10 +167,11 @@ RegisterCommand('blackmarket_setjob', function(source, args)
         return
     end
     
-    local targetId = tonumber(args[1])
+    args = args or {}
+    local targetId = BMInteger(args[1], 0)
     local job = args[2]
     
-    if not targetId or not job then
+    if targetId <= 0 or not job then
         print('Usage: blackmarket_setjob [playerId] [jobName]')
         return
     end
@@ -180,7 +196,7 @@ end, true)
 
 RegisterNetEvent('blackmarket:server:sellItem', function(itemName, quantity)
     local playerId = source
-    quantity = tonumber(quantity) or 1
+    quantity = BMInteger(quantity, 1)
     
     if quantity <= 0 then
         TriggerClientEvent('blackmarket:client:notify', playerId, 'Black Market', 'Invalid quantity', 'error')
@@ -188,7 +204,7 @@ RegisterNetEvent('blackmarket:server:sellItem', function(itemName, quantity)
     end
     
     -- Check if item exists in inventory
-    local itemCount = exports.ox_inventory:GetItemCount(playerId, itemName)
+    local itemCount = BMInteger(exports.ox_inventory:GetItemCount(playerId, itemName), 0)
     if not itemCount or itemCount < quantity then
         TriggerClientEvent('blackmarket:client:notify', playerId, 'Black Market', 'Not enough items', 'error')
         return
@@ -209,7 +225,7 @@ RegisterNetEvent('blackmarket:server:sellItem', function(itemName, quantity)
         return
     end
     
-    local sellPrice = math.floor(itemConfig.basePrice * 0.5 * quantity)
+    local sellPrice = math.floor(BMInteger(itemConfig.basePrice, 0) * 0.5 * quantity)
     
     -- Remove item
     local removed = exports.ox_inventory:RemoveItem(playerId, itemName, quantity)
@@ -277,11 +293,12 @@ function GetPlayerJob(playerId)
 end
 
 RegisterCommand('blackmarket_setcred', function(source, args)
-    local targetId = tonumber(args[1])
-    local amount = tonumber(args[2])
+    args = args or {}
+    local targetId = BMInteger(args[1], 0)
+    local amount = args[2] and BMInteger(args[2], 0) or nil
 
-    if not targetId or amount == nil then
-        local usage = 'Usage: blackmarket_setcred [playerId] [0-' .. Config.Reputation.maxCred .. ']'
+    if targetId <= 0 or amount == nil then
+        local usage = 'Usage: blackmarket_setcred [playerId] [0-' .. BMInteger(Config.Reputation.maxCred, 100) .. ']'
         if source == 0 then
             print(usage)
         else
@@ -301,7 +318,7 @@ RegisterCommand('blackmarket_setcred', function(source, args)
     end
 
     SetPlayerCred(targetId, amount)
-    local clampedAmount = GetPlayerCred(targetId)
+    local clampedAmount = BMInteger(GetPlayerCred(targetId), 0)
     local message = string.format('Set %s (%d) street cred to %d', GetPlayerName(targetId), targetId, clampedAmount)
 
     if source == 0 then
@@ -324,7 +341,7 @@ CreateThread(function()
     
     if Config.Debug then
         print('[BlackMarket] Server initialized')
-        print('[BlackMarket] Items loaded:', #Config.Items)
+        print('[BlackMarket] Items loaded:', #(type(Config.Items) == 'table' and Config.Items or {}))
     end
 end)
 

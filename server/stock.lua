@@ -10,33 +10,51 @@ local StockHistory = {}
 -- =============================================================================
 
 local function Clamp(value, minimum, maximum)
+    value = BMNumber(value, 0)
+    minimum = BMNumber(minimum, value)
+    maximum = BMNumber(maximum, minimum)
+
+    if maximum < minimum then
+        maximum = minimum
+    end
+
     if value < minimum then return minimum end
     if value > maximum then return maximum end
     return value
 end
 
 local function CopyItemConfig(item)
+    local basePrice = BMInteger(item.basePrice, 0)
+    local minPrice = BMInteger(item.minPrice, basePrice)
+    local maxPrice = BMInteger(item.maxPrice, basePrice)
+    local baseStock = BMInteger(item.baseStock, 0)
+    local minStock = BMInteger(item.minStock, 0)
+    local maxStock = BMInteger(item.maxStock, baseStock)
+
+    if maxPrice < minPrice then maxPrice = minPrice end
+    if maxStock < minStock then maxStock = minStock end
+
     return {
         name = item.name,
-        label = item.label or item.name,
-        category = item.category or 'contraband',
-        basePrice = tonumber(item.basePrice) or 0,
-        minPrice = tonumber(item.minPrice) or tonumber(item.basePrice) or 0,
-        maxPrice = tonumber(item.maxPrice) or tonumber(item.basePrice) or 0,
-        baseStock = tonumber(item.baseStock) or 0,
-        minStock = tonumber(item.minStock) or 0,
-        maxStock = tonumber(item.maxStock) or tonumber(item.baseStock) or 0,
-        requiredCred = tonumber(item.requiredCred) or 0,
-        priceVariance = tonumber(item.priceVariance) or 0,
-        stock = tonumber(item.baseStock) or 0,
-        currentPrice = tonumber(item.basePrice) or 0,
+        label = BMString(item.label, BMString(item.name, 'Unknown Item')),
+        category = BMString(item.category, 'contraband'),
+        basePrice = basePrice,
+        minPrice = minPrice,
+        maxPrice = maxPrice,
+        baseStock = baseStock,
+        minStock = minStock,
+        maxStock = maxStock,
+        requiredCred = BMInteger(item.requiredCred, 0),
+        priceVariance = BMNumber(item.priceVariance, 0),
+        stock = baseStock,
+        currentPrice = basePrice,
         lastPriceUpdate = os.time()
     }
 end
 
 local function GetRandomStock(item)
-    local minStock = tonumber(item.minStock) or 0
-    local maxStock = tonumber(item.maxStock) or tonumber(item.baseStock) or minStock
+    local minStock = BMInteger(item.minStock, 0)
+    local maxStock = BMInteger(item.maxStock, BMInteger(item.baseStock, minStock))
 
     if maxStock < minStock then
         maxStock = minStock
@@ -46,27 +64,31 @@ local function GetRandomStock(item)
 end
 
 local function GetRandomizedPrice(item)
-    local variance = tonumber(item.priceVariance) or 0
+    local variance = BMNumber(item.priceVariance, 0)
     local minMultiplier = math.floor((1.0 - variance) * 100)
     local maxMultiplier = math.floor((1.0 + variance) * 100)
+    if maxMultiplier < minMultiplier then
+        maxMultiplier = minMultiplier
+    end
+
     local multiplier = math.random(minMultiplier, maxMultiplier) / 100
-    local basePrice = tonumber(item.basePrice) or 0
-    local minPrice = tonumber(item.minPrice) or basePrice
-    local maxPrice = tonumber(item.maxPrice) or basePrice
+    local basePrice = BMInteger(item.basePrice, 0)
+    local minPrice = BMInteger(item.minPrice, basePrice)
+    local maxPrice = BMInteger(item.maxPrice, basePrice)
 
     return Clamp(math.floor(basePrice * multiplier), minPrice, maxPrice)
 end
 
 local function GetSupplyAdjustedPrice(item)
     local price = GetRandomizedPrice(item)
-    local maxStock = tonumber(item.maxStock) or 0
-    local stock = tonumber(item.stock) or 0
+    local maxStock = BMInteger(item.maxStock, 0)
+    local stock = BMInteger(item.stock, 0)
     local stockRatio = maxStock > 0 and (stock / maxStock) or 1
 
     if stockRatio <= 0.25 then
-        price = math.floor(price * Config.Stock.demandMultiplier)
+        price = math.floor(price * BMNumber(Config.Stock.demandMultiplier, 1.5))
     elseif stockRatio >= 0.75 then
-        price = math.floor(price * Config.Stock.supplyMultiplier)
+        price = math.floor(price * BMNumber(Config.Stock.supplyMultiplier, 0.8))
     end
 
     return Clamp(price, item.minPrice, item.maxPrice)
@@ -75,14 +97,16 @@ end
 local function InitializeShopItems()
     ShopItems = {}
 
-    for _, item in ipairs(Config.Items) do
-        local shopItem = CopyItemConfig(item)
-        shopItem.stock = GetRandomStock(shopItem)
-        shopItem.currentPrice = GetSupplyAdjustedPrice(shopItem)
-        ShopItems[shopItem.name] = shopItem
+    for _, item in ipairs(type(Config.Items) == 'table' and Config.Items or {}) do
+        if item.name then
+            local shopItem = CopyItemConfig(item)
+            shopItem.stock = GetRandomStock(shopItem)
+            shopItem.currentPrice = GetSupplyAdjustedPrice(shopItem)
+            ShopItems[shopItem.name] = shopItem
+        end
     end
 
-    DebugPrint('Stock initialized for ' .. tostring(#Config.Items) .. ' items')
+    DebugPrint('Stock initialized for ' .. tostring(#(type(Config.Items) == 'table' and Config.Items or {})) .. ' items')
 end
 
 -- =============================================================================
@@ -90,6 +114,8 @@ end
 -- =============================================================================
 
 function UpdateStockHistory(itemName, oldStock, newStock, reason)
+    if not itemName then return end
+
     if not StockHistory[itemName] then
         StockHistory[itemName] = {}
     end
@@ -170,7 +196,7 @@ function ConsumeStock(itemName, quantity)
     local item = GetItemData(itemName)
     if not item then return false end
 
-    quantity = tonumber(quantity) or 1
+    quantity = BMInteger(quantity, 1)
     if quantity <= 0 or item.stock < quantity then return false end
 
     local oldStock = item.stock
@@ -185,24 +211,26 @@ function CanAccessItem(source, itemName)
     local item = GetItemData(itemName)
     if not item then return false end
 
-    return GetPlayerCred(source) >= (item.requiredCred or 0)
+    return BMInteger(GetPlayerCred(source), 0) >= BMInteger(item.requiredCred, 0)
 end
 
 function GetDiscountedPrice(source, price)
-    local cred = GetPlayerCred(source)
+    local cred = BMInteger(GetPlayerCred(source), 0)
     local modifier = 1.0
 
-    for _, mod in ipairs(Config.Reputation.priceModifiers) do
-        if cred >= mod.minCred then
-            modifier = mod.modifier
+    local modifiers = type(Config.Reputation.priceModifiers) == 'table' and Config.Reputation.priceModifiers or {}
+    for _, mod in ipairs(modifiers) do
+        if cred >= BMInteger(mod.minCred, 0) then
+            modifier = BMNumber(mod.modifier, 1.0)
         end
     end
 
-    return math.floor(price * modifier)
+    return math.floor(BMNumber(price, 0) * modifier)
 end
 
 function AwardPurchaseCred(source, category)
-    local gain = Config.Reputation.purchaseGain[category] or 0
+    local purchaseGain = type(Config.Reputation.purchaseGain) == 'table' and Config.Reputation.purchaseGain or {}
+    local gain = BMInteger(purchaseGain[category], 0)
     if gain <= 0 then return false end
 
     return AddPlayerCred(source, gain)

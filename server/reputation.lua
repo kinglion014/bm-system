@@ -10,17 +10,16 @@ local CredDataFile = 'cred_data.json'
 -- =============================================================================
 
 local function LoadCredData()
-    local resourcePath = GetResourcePath(GetCurrentResourceName())
-    local filePath = resourcePath .. '/' .. CredDataFile
-    
     local rawData = LoadResourceFile(GetCurrentResourceName(), CredDataFile)
     
     if rawData then
         local decoded = json.decode(rawData)
-        if decoded then
+        if type(decoded) == 'table' then
             PlayerCred = decoded
             if Config.Debug then
-                print('[BlackMarket] Loaded cred data for ' .. #PlayerCred .. ' players')
+                local count = 0
+                for _ in pairs(PlayerCred) do count = count + 1 end
+                print('[BlackMarket] Loaded cred data for ' .. count .. ' players')
             end
         end
     end
@@ -61,34 +60,37 @@ function GetPlayerCred(source)
     local identifier = GetPlayerIdentifier(source)
     if not identifier then return Config.Reputation.startingCred end
     
-    return PlayerCred[identifier] or Config.Reputation.startingCred
+    return BMInteger(PlayerCred[identifier], BMInteger(Config.Reputation.startingCred, 0))
 end
 
 function SetPlayerCred(source, amount)
     local identifier = GetPlayerIdentifier(source)
     if not identifier then return false end
     
-    amount = math.max(0, math.min(Config.Reputation.maxCred, amount))
+    amount = math.max(0, math.min(BMInteger(Config.Reputation.maxCred, 100), BMInteger(amount, 0)))
     PlayerCred[identifier] = amount
     
     -- Update statebag for client access
-    local playerState = Player(source).state
-    if playerState then
-        playerState:set('streetCred', amount, true)
-    end
+    pcall(function()
+        local player = Player(source)
+        local playerState = player and player.state
+        if playerState then
+            playerState:set('streetCred', amount, true)
+        end
+    end)
     
     return true
 end
 
 function AddPlayerCred(source, amount)
-    local currentCred = GetPlayerCred(source)
-    local newCred = math.min(Config.Reputation.maxCred, currentCred + amount)
+    local currentCred = BMInteger(GetPlayerCred(source), 0)
+    local newCred = math.min(BMInteger(Config.Reputation.maxCred, 100), currentCred + BMInteger(amount, 0))
     return SetPlayerCred(source, newCred)
 end
 
 function RemovePlayerCred(source, amount)
-    local currentCred = GetPlayerCred(source)
-    local newCred = math.max(0, currentCred - amount)
+    local currentCred = BMInteger(GetPlayerCred(source), 0)
+    local newCred = math.max(0, currentCred - BMInteger(amount, 0))
     return SetPlayerCred(source, newCred)
 end
 
@@ -97,6 +99,8 @@ end
 -- =============================================================================
 
 function GetPlayerIdentifier(source)
+    if not source then return nil end
+
     -- Get license identifier
     local identifiers = GetPlayerIdentifiers(source)
     
@@ -109,14 +113,16 @@ function GetPlayerIdentifier(source)
     end
     
     -- Fallback to server ID if no license
-    return 'player_' .. source
+    return 'player_' .. BMString(source, 'unknown')
 end
 
 function GetCredTitle(cred)
+    cred = BMInteger(cred, 0)
     local title = 'Outsider'
+    local modifiers = type(Config.Reputation.priceModifiers) == 'table' and Config.Reputation.priceModifiers or {}
     
-    for i = #Config.Reputation.priceModifiers, 1, -1 do
-        if cred >= Config.Reputation.priceModifiers[i].minCred then
+    for i = #modifiers, 1, -1 do
+        if cred >= BMInteger(modifiers[i].minCred, 0) then
             local levelNames = {
                 [1] = 'Outsider',
                 [2] = 'Street Rat',
@@ -138,15 +144,17 @@ end
 -- =============================================================================
 
 lib.callback.register('blackmarket:server:getCredWithInfo', function(source)
-    local cred = GetPlayerCred(source)
+    local cred = BMInteger(GetPlayerCred(source), 0)
     local title = GetCredTitle(cred)
     local nextLevel = nil
+    local modifiers = type(Config.Reputation.priceModifiers) == 'table' and Config.Reputation.priceModifiers or {}
     
-    for i, mod in ipairs(Config.Reputation.priceModifiers) do
-        if cred < mod.minCred then
+    for _, mod in ipairs(modifiers) do
+        local minCred = BMInteger(mod.minCred, 0)
+        if cred < minCred then
             nextLevel = {
-                credNeeded = mod.minCred - cred,
-                title = GetCredTitle(mod.minCred)
+                credNeeded = minCred - cred,
+                title = GetCredTitle(minCred)
             }
             break
         end

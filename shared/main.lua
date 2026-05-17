@@ -4,13 +4,35 @@
 
 -- Utility function to format numbers with commas
 function FormatNumber(num)
-    if not num then return '0' end
+    num = BMNumber(num, 0)
     local formatted = tostring(num)
     while true do
         formatted, k = string.gsub(formatted, '^(-?%d+)(%d%d%d)', '%1,%2')
         if k == 0 then break end
     end
     return formatted
+end
+
+function BMNumber(value, fallback)
+    local number = tonumber(value)
+
+    if number == nil then
+        return fallback or 0
+    end
+
+    return number
+end
+
+function BMInteger(value, fallback)
+    return math.floor(BMNumber(value, fallback))
+end
+
+function BMString(value, fallback)
+    if value == nil then
+        return fallback or ''
+    end
+
+    return tostring(value)
 end
 
 -- Utility to get distance between two vectors
