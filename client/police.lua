@@ -18,11 +18,12 @@ function StartPoliceCheck()
     
     policeCheckThread = CreateThread(function()
         while isChecking do
+            local policeConfig = Config.Police or {}
             local players = GetActivePlayers()
             local myCoords = GetEntityCoords(PlayerPedId())
             local policeNearby = false
             local nearbyCount = 0
-            local alertRadius = BMNumber(Config.Police.alertRadius, 100.0)
+            local alertRadius = BMNumber(policeConfig.alertRadius, 100.0)
             
             for _, player in ipairs(players) do
                 local serverId = GetPlayerServerId(player)
@@ -42,7 +43,8 @@ function StartPoliceCheck()
             
             if policeNearby then
                 -- Flash warning on screen
-                local warning = BMString(Config.Police.messages.dangerDetected, 'WARNING: Police activity detected nearby!')
+                local messages = type(policeConfig.messages) == 'table' and policeConfig.messages or {}
+                local warning = BMString(messages.dangerDetected, 'WARNING: Police activity detected nearby!')
                 lib.showTextUI(warning .. string.format(' (%d nearby)', nearbyCount), {
                     position = 'top-center',
                     icon = 'triangle-exclamation',
@@ -60,7 +62,7 @@ function StartPoliceCheck()
                 lib.hideTextUI()
             end
             
-            Wait(BMInteger(Config.Police.checkInterval, 1000))
+            Wait(BMInteger(policeConfig.checkInterval, 1000))
         end
         
         lib.hideTextUI()
@@ -78,11 +80,12 @@ end
 -- =============================================================================
 
 RegisterCommand('checkpolice', function()
+    local policeConfig = Config.Police or {}
     local players = GetActivePlayers()
     local myCoords = GetEntityCoords(PlayerPedId())
     local policeCount = 0
     local policeNames = {}
-    local alertRadius = BMNumber(Config.Police.alertRadius, 100.0)
+    local alertRadius = BMNumber(policeConfig.alertRadius, 100.0)
     
     for _, player in ipairs(players) do
         local serverId = GetPlayerServerId(player)
@@ -108,9 +111,10 @@ RegisterCommand('checkpolice', function()
             duration = 5000
         })
     else
+        local messages = type(policeConfig.messages) == 'table' and policeConfig.messages or {}
         lib.notify({
             title = 'Police Detection',
-            description = BMString(Config.Police.messages.safeToTrade, 'Area appears clear.'),
+            description = BMString(messages.safeToTrade, 'Area appears clear.'),
             type = 'success',
             duration = 3000
         })

@@ -25,9 +25,7 @@ function LogTrade(data)
     local newLog = existingLog .. logEntry
     SaveResourceFile(GetCurrentResourceName(), LogFile, newLog, -1)
     
-    if Config.Debug then
-        print('[BlackMarket] ' .. logEntry)
-    end
+    DebugPrint(logEntry:gsub('%s+$', ''))
 end
 
 function LogPurchase(data)
@@ -46,9 +44,7 @@ function LogPurchase(data)
     local newLog = existingLog .. logEntry
     SaveResourceFile(GetCurrentResourceName(), LogFile, newLog, -1)
     
-    if Config.Debug then
-        print('[BlackMarket] ' .. logEntry)
-    end
+    DebugPrint(logEntry:gsub('%s+$', ''))
 end
 
 function LogEvent(eventType, data)

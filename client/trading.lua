@@ -27,6 +27,7 @@ local function GetNearbyPlayers()
     local players = GetActivePlayers()
     local myCoords = GetEntityCoords(PlayerPedId())
     local nearby = {}
+    local tradingConfig = Config.Trading or {}
 
     for _, player in ipairs(players) do
         local serverId = GetPlayerServerId(player)
@@ -35,7 +36,7 @@ local function GetNearbyPlayers()
             local coords = GetEntityCoords(ped)
             local dist = #(myCoords - coords)
 
-            if dist <= BMNumber(Config.Trading.maxDistance, 5.0) then
+            if dist <= BMNumber(tradingConfig.maxDistance, 5.0) then
                 table.insert(nearby, {
                     serverId = BMInteger(serverId, 0),
                     playerName = BMString(GetPlayerName(player), 'Unknown'),
@@ -88,10 +89,10 @@ function InitiateTrade(targetServerId)
         return
     end
 
-    local success = lib.callback.await('blackmarket:server:initiateTrade', false, targetServerId)
+    local success, message = lib.callback.await('blackmarket:server:initiateTrade', false, targetServerId)
 
     if not success then
-        Notify('Trading', 'Trade request failed or target is busy.', 'error')
+        Notify('Trading', message or 'Trade request failed or target is busy.', 'error')
     else
         Notify('Trading', 'Trade request sent. Waiting for response...', 'inform')
     end
@@ -257,12 +258,12 @@ function AddItemToTrade(tradeId, itemName, count)
         return
     end
 
-    local success = lib.callback.await('blackmarket:server:addTradeItem', false, tradeId, itemName, count)
+    local success, message = lib.callback.await('blackmarket:server:addTradeItem', false, tradeId, itemName, count)
 
     if success then
         Notify('Trading', 'Item added to trade.', 'success')
     else
-        Notify('Trading', 'Failed to add item.', 'error')
+        Notify('Trading', message or 'Failed to add item.', 'error')
     end
 end
 

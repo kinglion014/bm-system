@@ -8,6 +8,12 @@ Config.BlackMarket = {
     -- Secret location coordinates
     coords = vector4(113.42, -992.57, 29.28, 280.5), -- Hidden alley location
     npcModel = `g_m_m_chicold_01`, -- Gang member model
+    targetDistance = 2.5,
+    serverValidationDistance = 5.0, -- Server-side anti-cheat distance for buy/sell events
+    npc = {
+        alpha = 185, -- Slightly transparent so the dealer is harder to spot
+        scenario = 'WORLD_HUMAN_SMOKING'
+    },
     blip = {
         enabled = false, -- Keep it secret - no blip by default
         sprite = 466,
@@ -310,13 +316,33 @@ Config.Police = {
 }
 
 -- =============================================================================
+-- DISGUISE SYSTEM
+-- =============================================================================
+
+Config.Disguise = {
+    enabled = true,
+    radius = 35.0,
+    graceDistance = 7.5, -- Extra server-side tolerance for latency/desync
+    fakeJob = {
+        name = 'delivery',
+        label = 'Delivery Driver',
+        type = 'civilian',
+        onduty = true
+    }
+}
+
+-- =============================================================================
 -- TRADING SYSTEM
 -- =============================================================================
 
 Config.Trading = {
     maxDistance = 5.0, -- Max distance between traders
+    distanceGrace = 1.5, -- Extra server-side tolerance for sync differences
+    cooldown = 30, -- Seconds after completed/cancelled trades
+    requestCooldown = 10, -- Seconds between outgoing trade requests
     confirmTimeout = 60, -- Seconds to confirm trade
-    maxItemsPerTrade = 10
+    maxItemsPerTrade = 10,
+    logFile = 'trades.log'
 }
 
 -- =============================================================================

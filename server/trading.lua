@@ -5,7 +5,73 @@
 local ActiveTrades = {}
 local Trades = {}
 local PendingRequests = {}
+local RequestCooldowns = {}
+local TradeCooldowns = {}
 local TradeIdCounter = 0
+
+local function GetTradingConfig()
+    return Config.Trading or {}
+end
+
+local function GetCooldownRemaining(cooldowns, playerId)
+    local expiresAt = BMInteger(cooldowns[playerId], 0)
+    return math.max(0, expiresAt - os.time())
+end
+
+local function SetCooldown(cooldowns, playerId, seconds)
+    seconds = BMInteger(seconds, 0)
+    if seconds > 0 then
+        cooldowns[playerId] = os.time() + seconds
+    end
+end
+
+local function IsPlayerConnected(playerId)
+    return BMInteger(playerId, 0) > 0 and GetPlayerName(playerId) ~= nil
+end
+
+-- Server-side distance validation keeps spoofed clients from trading across the map.
+local function ArePlayersClose(player1, player2)
+    if not IsPlayerConnected(player1) or not IsPlayerConnected(player2) then
+        return false, 'Trade partner is no longer online.'
+    end
+
+    local ped1 = GetPlayerPed(player1)
+    local ped2 = GetPlayerPed(player2)
+    if not ped1 or ped1 == 0 or not ped2 or ped2 == 0 then
+        return false, 'Unable to verify player distance.'
+    end
+
+    local coords1 = GetEntityCoords(ped1)
+    local coords2 = GetEntityCoords(ped2)
+    local tradeConfig = GetTradingConfig()
+    local maxDistance = BMNumber(tradeConfig.maxDistance, 5.0) + BMNumber(tradeConfig.distanceGrace, 1.5)
+
+    if #(coords1 - coords2) > maxDistance then
+        return false, 'Players moved too far apart.'
+    end
+
+    return true
+end
+
+local function ValidateTradeDistance(trade)
+    if type(trade) ~= 'table' then
+        return false, 'Trade not found.'
+    end
+
+    return ArePlayersClose(trade.player1, trade.player2)
+end
+
+local function ApplyTradeCooldown(trade)
+    if type(trade) ~= 'table' then return end
+
+    local cooldown = BMInteger(GetTradingConfig().cooldown, 30)
+    SetCooldown(TradeCooldowns, trade.player1, cooldown)
+    SetCooldown(TradeCooldowns, trade.player2, cooldown)
+end
+
+local function GetRequestId(senderId, targetId)
+    return BMInteger(senderId, 0) .. '_' .. BMInteger(targetId, 0)
+end
 
 -- =============================================================================
 -- TRADE INITIATION
@@ -14,24 +80,49 @@ local TradeIdCounter = 0
 lib.callback.register('blackmarket:server:initiateTrade', function(source, targetId)
     targetId = BMInteger(targetId, 0)
     
-    if not targetId or targetId == source then
-        return false
+    if targetId <= 0 or targetId == source then
+        return false, 'Invalid trade target.'
+    end
+
+    if not IsPlayerConnected(targetId) then
+        return false, 'Target player is not online.'
     end
     
     -- Check if target is already in a trade
     if ActiveTrades[targetId] then
-        return false
+        return false, 'Target is already in a trade.'
     end
     
     -- Check if source is already in a trade
     if ActiveTrades[source] then
-        return false
+        return false, 'You are already in a trade.'
+    end
+
+    local sourceCooldown = GetCooldownRemaining(TradeCooldowns, source)
+    if sourceCooldown > 0 then
+        return false, string.format('Wait %d seconds before trading again.', sourceCooldown)
+    end
+
+    local targetCooldown = GetCooldownRemaining(TradeCooldowns, targetId)
+    if targetCooldown > 0 then
+        return false, 'Target recently finished a trade.'
+    end
+
+    local requestCooldown = GetCooldownRemaining(RequestCooldowns, source)
+    if requestCooldown > 0 then
+        return false, string.format('Wait %d seconds before sending another trade request.', requestCooldown)
+    end
+
+    local closeEnough, distanceMessage = ArePlayersClose(source, targetId)
+    if not closeEnough then
+        return false, distanceMessage
     end
     
     -- Check if there's already a pending request
-    local requestId = source .. '_' .. targetId
-    if PendingRequests[requestId] then
-        return false
+    local requestId = GetRequestId(source, targetId)
+    local reverseRequestId = GetRequestId(targetId, source)
+    if PendingRequests[requestId] or PendingRequests[reverseRequestId] then
+        return false, 'A trade request is already pending.'
     end
     
     -- Store pending request
@@ -40,13 +131,14 @@ lib.callback.register('blackmarket:server:initiateTrade', function(source, targe
         target = targetId,
         timestamp = os.time()
     }
+    SetCooldown(RequestCooldowns, source, BMInteger(GetTradingConfig().requestCooldown, 10))
     
     -- Send trade request to target
-    local senderName = GetPlayerName(source)
+    local senderName = BMString(GetPlayerName(source), 'Unknown')
     TriggerClientEvent('blackmarket:client:tradeRequest', targetId, source, senderName)
     
     -- Auto-expire request after timeout
-    SetTimeout(Config.Trading.confirmTimeout * 1000, function()
+    SetTimeout(BMInteger(GetTradingConfig().confirmTimeout, 60) * 1000, function()
         if PendingRequests[requestId] then
             PendingRequests[requestId] = nil
             TriggerClientEvent('blackmarket:client:notify', source, 'Trading', 
@@ -69,11 +161,41 @@ RegisterNetEvent('blackmarket:server:acceptTrade', function(senderId)
         return
     end
     
-    local requestId = senderId .. '_' .. source
+    local requestId = GetRequestId(senderId, source)
+    local request = PendingRequests[requestId]
     
-    if not PendingRequests[requestId] then
+    if not request then
         TriggerClientEvent('blackmarket:client:notify', source, 'Trading', 
             'No pending trade request.', 'error')
+        return
+    end
+
+    local timeout = BMInteger(GetTradingConfig().confirmTimeout, 60)
+    if os.time() - BMInteger(request.timestamp, 0) > timeout then
+        PendingRequests[requestId] = nil
+        TriggerClientEvent('blackmarket:client:notify', source, 'Trading', 'Trade request expired.', 'error')
+        return
+    end
+
+    if ActiveTrades[senderId] or ActiveTrades[source] then
+        PendingRequests[requestId] = nil
+        TriggerClientEvent('blackmarket:client:notify', source, 'Trading', 'One player is already in a trade.', 'error')
+        return
+    end
+
+    local sourceCooldown = GetCooldownRemaining(TradeCooldowns, source)
+    local senderCooldown = GetCooldownRemaining(TradeCooldowns, senderId)
+    if sourceCooldown > 0 or senderCooldown > 0 then
+        PendingRequests[requestId] = nil
+        TriggerClientEvent('blackmarket:client:notify', source, 'Trading', 'One player is still on trade cooldown.', 'error')
+        return
+    end
+
+    local closeEnough, distanceMessage = ArePlayersClose(senderId, source)
+    if not closeEnough then
+        PendingRequests[requestId] = nil
+        TriggerClientEvent('blackmarket:client:notify', source, 'Trading', distanceMessage, 'error')
+        TriggerClientEvent('blackmarket:client:notify', senderId, 'Trading', distanceMessage, 'error')
         return
     end
     
@@ -100,8 +222,8 @@ RegisterNetEvent('blackmarket:server:acceptTrade', function(senderId)
     ActiveTrades[source] = tradeId
     
     -- Send trade menu to both players
-    local senderName = GetPlayerName(source)
-    local otherName = GetPlayerName(senderId)
+    local senderName = BMString(GetPlayerName(source), 'Unknown')
+    local otherName = BMString(GetPlayerName(senderId), 'Unknown')
     
     TriggerClientEvent('blackmarket:client:openTrade', senderId, {
         tradeId = tradeId,
@@ -123,7 +245,7 @@ end)
 RegisterNetEvent('blackmarket:server:declineTrade', function(senderId)
     local source = source
     senderId = BMInteger(senderId, 0)
-    local requestId = senderId .. '_' .. source
+    local requestId = GetRequestId(senderId, source)
     
     if PendingRequests[requestId] then
         PendingRequests[requestId] = nil
@@ -139,21 +261,28 @@ end)
 lib.callback.register('blackmarket:server:addTradeItem', function(source, tradeId, itemName, count)
     local playerTradeId = ActiveTrades[source]
     tradeId = BMInteger(tradeId, 0)
+    itemName = BMString(itemName)
     count = BMInteger(count, 0)
     
-    if count <= 0 or not itemName or not playerTradeId or playerTradeId ~= tradeId then
-        return false
+    if count <= 0 or itemName == '' or not playerTradeId or playerTradeId ~= tradeId then
+        return false, 'Invalid item or trade.'
     end
     
     local trade = GetTradeById(tradeId)
     if not trade then
-        return false
+        return false, 'Trade not found.'
+    end
+
+    local closeEnough, distanceMessage = ValidateTradeDistance(trade)
+    if not closeEnough then
+        CancelTradeInternal(trade, distanceMessage)
+        return false, distanceMessage
     end
     
     -- Check item ownership
     local itemCount = BMInteger(exports.ox_inventory:GetItemCount(source, itemName), 0)
     if itemCount < count then
-        return false
+        return false, 'You do not have enough of that item.'
     end
     
     -- Determine which player is adding the item
@@ -168,12 +297,17 @@ lib.callback.register('blackmarket:server:addTradeItem', function(source, tradeI
             break
         end
     end
+
+    local existingCount = existingItem and BMInteger(existingItem.count, 0) or 0
+    if itemCount < existingCount + count then
+        return false, 'You do not have enough of that item.'
+    end
     
     if existingItem then
-        existingItem.count = BMInteger(existingItem.count, 0) + count
+        existingItem.count = existingCount + count
     else
-        if #itemsList >= BMInteger(Config.Trading.maxItemsPerTrade, 10) then
-            return false
+        if #itemsList >= BMInteger(GetTradingConfig().maxItemsPerTrade, 10) then
+            return false, 'Too many item types in this trade.'
         end
 
         local itemData = exports.ox_inventory:Items(itemName)
@@ -197,15 +331,22 @@ end)
 lib.callback.register('blackmarket:server:removeTradeItem', function(source, tradeId, itemName, count)
     local playerTradeId = ActiveTrades[source]
     tradeId = BMInteger(tradeId, 0)
+    itemName = BMString(itemName)
     count = BMInteger(count, 0)
     
-    if count <= 0 or not playerTradeId or playerTradeId ~= tradeId then
-        return false
+    if count <= 0 or itemName == '' or not playerTradeId or playerTradeId ~= tradeId then
+        return false, 'Invalid item or trade.'
     end
     
     local trade = GetTradeById(tradeId)
     if not trade then
-        return false
+        return false, 'Trade not found.'
+    end
+
+    local closeEnough, distanceMessage = ValidateTradeDistance(trade)
+    if not closeEnough then
+        CancelTradeInternal(trade, distanceMessage)
+        return false, distanceMessage
     end
     
     local isPlayer1 = trade.player1 == source
@@ -249,6 +390,12 @@ lib.callback.register('blackmarket:server:confirmTrade', function(source, tradeI
     if not trade then
         return false, 'Trade not found.'
     end
+
+    local closeEnough, distanceMessage = ValidateTradeDistance(trade)
+    if not closeEnough then
+        CancelTradeInternal(trade, distanceMessage)
+        return false, distanceMessage
+    end
     
     -- Set confirmation
     if trade.player1 == source then
@@ -271,6 +418,19 @@ lib.callback.register('blackmarket:server:confirmTrade', function(source, tradeI
 end)
 
 function ExecuteTrade(trade)
+    local closeEnough, distanceMessage = ValidateTradeDistance(trade)
+    if not closeEnough then
+        CancelTradeInternal(trade, distanceMessage)
+        return false, distanceMessage
+    end
+
+    trade.player1Items = type(trade.player1Items) == 'table' and trade.player1Items or {}
+    trade.player2Items = type(trade.player2Items) == 'table' and trade.player2Items or {}
+
+    if #trade.player1Items == 0 and #trade.player2Items == 0 then
+        return false, 'Add at least one item before completing the trade.'
+    end
+
     local movedItems = {}
 
     local function rollbackMovedItems()
@@ -358,8 +518,9 @@ function ExecuteTrade(trade)
     end
     
     -- Add reputation to both players
-    AddPlayerCred(trade.player1, Config.Reputation.tradeGain)
-    AddPlayerCred(trade.player2, Config.Reputation.tradeGain)
+    local reputationConfig = Config.Reputation or {}
+    AddPlayerCred(trade.player1, BMInteger(reputationConfig.tradeGain, 2))
+    AddPlayerCred(trade.player2, BMInteger(reputationConfig.tradeGain, 2))
     
     -- Log the trade
     local p1Name = GetPlayerName(trade.player1)
@@ -388,6 +549,7 @@ function ExecuteTrade(trade)
         'Trade completed successfully!')
     
     -- Clean up
+    ApplyTradeCooldown(trade)
     ActiveTrades[trade.player1] = nil
     ActiveTrades[trade.player2] = nil
     Trades[trade.id] = nil
@@ -413,9 +575,13 @@ RegisterNetEvent('blackmarket:server:cancelTrade', function(tradeId)
 end)
 
 function CancelTradeInternal(trade, reason)
+    if type(trade) ~= 'table' then return end
+    reason = BMString(reason, 'Trade cancelled.')
+
     TriggerClientEvent('blackmarket:client:tradeCancelled', trade.player1, reason)
     TriggerClientEvent('blackmarket:client:tradeCancelled', trade.player2, reason)
     
+    ApplyTradeCooldown(trade)
     ActiveTrades[trade.player1] = nil
     ActiveTrades[trade.player2] = nil
     Trades[trade.id] = nil
@@ -458,6 +624,12 @@ AddEventHandler('playerDropped', function(reason)
         local trade = GetTradeById(tradeId)
         if trade then
             CancelTradeInternal(trade, 'Partner disconnected.')
+        end
+    end
+
+    for requestId, request in pairs(PendingRequests) do
+        if request.sender == source or request.target == source then
+            PendingRequests[requestId] = nil
         end
     end
 end)

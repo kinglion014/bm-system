@@ -33,20 +33,37 @@ local function CreateBlackMarketPed()
         return
     end
 
-    local model = Config.BlackMarket.npcModel
+    local marketConfig = Config.BlackMarket or {}
+    local coords = marketConfig.coords
+    local model = marketConfig.npcModel
+
+    if not coords or not model then
+        BMLog('ERROR', 'Black market NPC cannot spawn; missing coords or npcModel in config.')
+        return
+    end
+
     RequestModel(model)
     
     while not HasModelLoaded(model) do
         Wait(100)
     end
 
-    local coords = Config.BlackMarket.coords
     blackMarketPed = CreatePed(4, model, coords.x, coords.y, coords.z, coords.w, false, true)
     
     SetEntityInvincible(blackMarketPed, true)
     SetBlockingOfNonTemporaryEvents(blackMarketPed, true)
     FreezeEntityPosition(blackMarketPed, true)
     SetPedFleeAttributes(blackMarketPed, 0, false)
+
+    local npcSettings = type(marketConfig.npc) == 'table' and marketConfig.npc or {}
+    local alpha = BMInteger(npcSettings.alpha, 255)
+    if alpha >= 0 and alpha < 255 then
+        SetEntityAlpha(blackMarketPed, alpha, false)
+    end
+
+    if npcSettings.scenario then
+        TaskStartScenarioInPlace(blackMarketPed, BMString(npcSettings.scenario), 0, true)
+    end
     
     -- Configure ox_target for the ped
     exports.ox_target:addLocalEntity(blackMarketPed, {
@@ -54,7 +71,7 @@ local function CreateBlackMarketPed()
             name = 'blackmarket_open',
             icon = 'fa-solid fa-user-secret',
             label = 'Speak to Dealer',
-            distance = 2.5,
+            distance = BMNumber(marketConfig.targetDistance, 2.5),
             onSelect = function()
                 OpenBlackMarketMenu()
             end
@@ -63,7 +80,7 @@ local function CreateBlackMarketPed()
             name = 'blackmarket_checkcred',
             icon = 'fa-solid fa-star',
             label = 'Check Street Cred',
-            distance = 2.5,
+            distance = BMNumber(marketConfig.targetDistance, 2.5),
             onSelect = function()
                 local cred = GetStreetCred()
                 Notify('Street Cred', string.format('Your reputation: %d/100', cred), 'inform')
@@ -72,6 +89,26 @@ local function CreateBlackMarketPed()
     })
     
     DebugPrint('NPC spawned at:', coords)
+end
+
+-- Tracks whether this client is close enough for the server to apply a fake visible job.
+local disguiseActive = false
+
+local function SetDisguiseState(active)
+    if disguiseActive == active then
+        return
+    end
+
+    disguiseActive = active
+    TriggerServerEvent('blackmarket:server:setDisguise', active)
+end
+
+local function IsNearBlackMarket(radius)
+    local coords = Config.BlackMarket and Config.BlackMarket.coords
+    if not coords then return false end
+
+    local playerCoords = GetEntityCoords(PlayerPedId())
+    return #(playerCoords - vector3(coords.x, coords.y, coords.z)) <= BMNumber(radius, 35.0)
 end
 
 -- =============================================================================
@@ -247,6 +284,14 @@ RegisterCommand('mycred', function()
     Notify('Street Cred', string.format('Your reputation: %d/100', cred), 'inform')
 end, false)
 
+RegisterCommand('blackmarket_closemenus', function()
+    pcall(function() lib.hideContext() end)
+    pcall(function() lib.closeInputDialog() end)
+    pcall(function() lib.hideTextUI() end)
+end, false)
+
+RegisterKeyMapping('blackmarket_closemenus', 'Close black market menus', 'keyboard', 'ESCAPE')
+
 -- =============================================================================
 -- EVENTS
 -- =============================================================================
@@ -264,11 +309,31 @@ CreateThread(function()
     CreateBlackMarketPed()
 end)
 
+CreateThread(function()
+    Wait(2000)
+
+    while true do
+        local disguiseConfig = Config.Disguise or {}
+
+        if disguiseConfig.enabled then
+            SetDisguiseState(IsNearBlackMarket(disguiseConfig.radius))
+        elseif disguiseActive then
+            SetDisguiseState(false)
+        end
+
+        Wait(disguiseActive and 2500 or 5000)
+    end
+end)
+
 -- Cleanup on resource stop
 AddEventHandler('onResourceStop', function(resourceName)
     if resourceName == GetCurrentResourceName() then
         if blackMarketPed and DoesEntityExist(blackMarketPed) then
             DeleteEntity(blackMarketPed)
+        end
+
+        if disguiseActive then
+            TriggerServerEvent('blackmarket:server:setDisguise', false)
         end
     end
 end)

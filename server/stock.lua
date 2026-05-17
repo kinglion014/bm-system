@@ -84,11 +84,12 @@ local function GetSupplyAdjustedPrice(item)
     local maxStock = BMInteger(item.maxStock, 0)
     local stock = BMInteger(item.stock, 0)
     local stockRatio = maxStock > 0 and (stock / maxStock) or 1
+    local stockConfig = Config.Stock or {}
 
     if stockRatio <= 0.25 then
-        price = math.floor(price * BMNumber(Config.Stock.demandMultiplier, 1.5))
+        price = math.floor(price * BMNumber(stockConfig.demandMultiplier, 1.5))
     elseif stockRatio >= 0.75 then
-        price = math.floor(price * BMNumber(Config.Stock.supplyMultiplier, 0.8))
+        price = math.floor(price * BMNumber(stockConfig.supplyMultiplier, 0.8))
     end
 
     return Clamp(price, item.minPrice, item.maxPrice)
@@ -98,7 +99,7 @@ local function InitializeShopItems()
     ShopItems = {}
 
     for _, item in ipairs(type(Config.Items) == 'table' and Config.Items or {}) do
-        if item.name then
+        if type(item) == 'table' and item.name then
             local shopItem = CopyItemConfig(item)
             shopItem.stock = GetRandomStock(shopItem)
             shopItem.currentPrice = GetSupplyAdjustedPrice(shopItem)
@@ -218,7 +219,8 @@ function GetDiscountedPrice(source, price)
     local cred = BMInteger(GetPlayerCred(source), 0)
     local modifier = 1.0
 
-    local modifiers = type(Config.Reputation.priceModifiers) == 'table' and Config.Reputation.priceModifiers or {}
+    local reputationConfig = Config.Reputation or {}
+    local modifiers = type(reputationConfig.priceModifiers) == 'table' and reputationConfig.priceModifiers or {}
     for _, mod in ipairs(modifiers) do
         if cred >= BMInteger(mod.minCred, 0) then
             modifier = BMNumber(mod.modifier, 1.0)
@@ -229,7 +231,8 @@ function GetDiscountedPrice(source, price)
 end
 
 function AwardPurchaseCred(source, category)
-    local purchaseGain = type(Config.Reputation.purchaseGain) == 'table' and Config.Reputation.purchaseGain or {}
+    local reputationConfig = Config.Reputation or {}
+    local purchaseGain = type(reputationConfig.purchaseGain) == 'table' and reputationConfig.purchaseGain or {}
     local gain = BMInteger(purchaseGain[category], 0)
     if gain <= 0 then return false end
 
@@ -245,7 +248,8 @@ CreateThread(function()
     InitializeShopItems()
 
     while true do
-        Wait((Config.Stock.resetInterval or 30) * 60000)
+        local stockConfig = Config.Stock or {}
+        Wait(BMInteger(stockConfig.resetInterval, 30) * 60000)
         ResetStock()
     end
 end)
@@ -254,7 +258,8 @@ CreateThread(function()
     Wait(1000)
 
     while true do
-        Wait((Config.Stock.priceUpdateInterval or 15) * 60000)
+        local stockConfig = Config.Stock or {}
+        Wait(BMInteger(stockConfig.priceUpdateInterval, 15) * 60000)
         UpdatePrices()
     end
 end)

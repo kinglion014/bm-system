@@ -13,20 +13,26 @@ local function LoadCredData()
     local rawData = LoadResourceFile(GetCurrentResourceName(), CredDataFile)
     
     if rawData then
-        local decoded = json.decode(rawData)
+        local ok, decoded = pcall(json.decode, rawData)
+        if not ok then
+            BMLog('WARN', 'Unable to decode %s; starting with empty reputation data.', CredDataFile)
+            PlayerCred = {}
+            return
+        end
+
         if type(decoded) == 'table' then
             PlayerCred = decoded
             if Config.Debug then
                 local count = 0
                 for _ in pairs(PlayerCred) do count = count + 1 end
-                print('[BlackMarket] Loaded cred data for ' .. count .. ' players')
+                BMLog('DEBUG', 'Loaded cred data for %d players', count)
             end
         end
     end
 end
 
 local function SaveCredData()
-    local encoded = json.encode(PlayerCred)
+    local encoded = json.encode(PlayerCred or {})
     SaveResourceFile(GetCurrentResourceName(), CredDataFile, encoded, -1)
 end
 
@@ -57,18 +63,21 @@ end)
 -- =============================================================================
 
 function GetPlayerCred(source)
-    local identifier = GetPlayerIdentifier(source)
-    if not identifier then return Config.Reputation.startingCred end
+    local identifier = GetBlackMarketIdentifier(source)
+    local reputationConfig = Config.Reputation or {}
+    if not identifier then return BMInteger(reputationConfig.startingCred, 0) end
     
-    return BMInteger(PlayerCred[identifier], BMInteger(Config.Reputation.startingCred, 0))
+    return BMInteger(PlayerCred[identifier], BMInteger(reputationConfig.startingCred, 0))
 end
 
 function SetPlayerCred(source, amount)
-    local identifier = GetPlayerIdentifier(source)
+    local identifier = GetBlackMarketIdentifier(source)
     if not identifier then return false end
     
-    amount = math.max(0, math.min(BMInteger(Config.Reputation.maxCred, 100), BMInteger(amount, 0)))
+    local reputationConfig = Config.Reputation or {}
+    amount = math.max(0, math.min(BMInteger(reputationConfig.maxCred, 100), BMInteger(amount, 0)))
     PlayerCred[identifier] = amount
+    SaveCredData()
     
     -- Update statebag for client access
     pcall(function()
@@ -84,7 +93,8 @@ end
 
 function AddPlayerCred(source, amount)
     local currentCred = BMInteger(GetPlayerCred(source), 0)
-    local newCred = math.min(BMInteger(Config.Reputation.maxCred, 100), currentCred + BMInteger(amount, 0))
+    local reputationConfig = Config.Reputation or {}
+    local newCred = math.min(BMInteger(reputationConfig.maxCred, 100), currentCred + BMInteger(amount, 0))
     return SetPlayerCred(source, newCred)
 end
 
@@ -98,7 +108,7 @@ end
 -- HELPER FUNCTIONS
 -- =============================================================================
 
-function GetPlayerIdentifier(source)
+function GetBlackMarketIdentifier(source)
     if not source then return nil end
 
     -- Get license identifier
@@ -119,7 +129,8 @@ end
 function GetCredTitle(cred)
     cred = BMInteger(cred, 0)
     local title = 'Outsider'
-    local modifiers = type(Config.Reputation.priceModifiers) == 'table' and Config.Reputation.priceModifiers or {}
+    local reputationConfig = Config.Reputation or {}
+    local modifiers = type(reputationConfig.priceModifiers) == 'table' and reputationConfig.priceModifiers or {}
     
     for i = #modifiers, 1, -1 do
         if cred >= BMInteger(modifiers[i].minCred, 0) then
@@ -147,7 +158,8 @@ lib.callback.register('blackmarket:server:getCredWithInfo', function(source)
     local cred = BMInteger(GetPlayerCred(source), 0)
     local title = GetCredTitle(cred)
     local nextLevel = nil
-    local modifiers = type(Config.Reputation.priceModifiers) == 'table' and Config.Reputation.priceModifiers or {}
+    local reputationConfig = Config.Reputation or {}
+    local modifiers = type(reputationConfig.priceModifiers) == 'table' and reputationConfig.priceModifiers or {}
     
     for _, mod in ipairs(modifiers) do
         local minCred = BMInteger(mod.minCred, 0)
@@ -163,7 +175,7 @@ lib.callback.register('blackmarket:server:getCredWithInfo', function(source)
     return {
         cred = cred,
         title = title,
-        maxCred = Config.Reputation.maxCred,
+        maxCred = BMInteger(reputationConfig.maxCred, 100),
         nextLevel = nextLevel
     }
 end)
@@ -177,3 +189,4 @@ exports('setPlayerCred', SetPlayerCred)
 exports('addPlayerCred', AddPlayerCred)
 exports('removePlayerCred', RemovePlayerCred)
 exports('getCredTitle', GetCredTitle)
+exports('getBlackMarketIdentifier', GetBlackMarketIdentifier)
