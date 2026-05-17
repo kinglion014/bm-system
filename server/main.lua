@@ -34,6 +34,21 @@ lib.callback.register('blackmarket:server:getInventory', function(source)
     return items
 end)
 
+lib.callback.register('blackmarket:server:isPolice', function(source, targetId)
+    targetId = tonumber(targetId)
+    if not targetId then return false end
+
+    local job = GetPlayerJob(targetId)
+    if not job then return false end
+
+    if Config.Police.requireOnDuty and job.onduty == false then
+        return false
+    end
+
+    return Config.Police.policeJobs[job.name] == true
+        or Config.Police.policeJobTypes[job.type] == true
+end)
+
 -- =============================================================================
 -- PURCHASE SYSTEM
 -- =============================================================================
@@ -71,8 +86,8 @@ RegisterNetEvent('blackmarket:server:buyItem', function(itemName, quantity)
     local totalPrice = finalPrice * quantity
     
     -- Check if player has enough money
-    local money = exports.ox_inventory:GetItem(playerId, 'money', nil, false) or 0
-    local blackMoney = exports.ox_inventory:GetItem(playerId, 'black_money', nil, false) or 0
+    local money = exports.ox_inventory:GetItemCount(playerId, 'money') or 0
+    local blackMoney = exports.ox_inventory:GetItemCount(playerId, 'black_money') or 0
     
     -- Prefer black money for black market purchases
     local useBlackMoney = blackMoney >= totalPrice
@@ -145,16 +160,16 @@ RegisterCommand('blackmarket_setjob', function(source, args)
         return
     end
     
-    local identifier = GetPlayerIdentifierByType(targetId, 'license')
+    local identifierKey = GetSafeIdentifierKey(targetId)
     
-    if not identifier then
+    if not identifierKey then
         print('Player not found')
         return
     end
     
     -- Save job
-    local data = { job = job }
-    SaveResourceFile(GetCurrentResourceName(), 'data/jobs/' .. identifier .. '.json', json.encode(data), #json.encode(data))
+    local data = json.encode({ job = job, onduty = true })
+    SaveResourceFile(GetCurrentResourceName(), 'data/jobs/' .. identifierKey .. '.json', data, #data)
     
     print(string.format('[BlackMarket] Set player %d job to %s', targetId, job))
 end, true)
@@ -173,7 +188,7 @@ RegisterNetEvent('blackmarket:server:sellItem', function(itemName, quantity)
     end
     
     -- Check if item exists in inventory
-    local itemCount = exports.ox_inventory:GetItem(playerId, itemName, nil, false)
+    local itemCount = exports.ox_inventory:GetItemCount(playerId, itemName)
     if not itemCount or itemCount < quantity then
         TriggerClientEvent('blackmarket:client:notify', playerId, 'Black Market', 'Not enough items', 'error')
         return
@@ -218,6 +233,85 @@ RegisterNetEvent('blackmarket:server:sellItem', function(itemName, quantity)
     TriggerClientEvent('blackmarket:client:notify', playerId, 'Black Market', 
         string.format('Sold %dx for $%d (black money)', quantity, sellPrice), 'success')
 end)
+
+-- =============================================================================
+-- PLAYER JOB / ADMIN HELPERS
+-- =============================================================================
+
+function GetSafeIdentifierKey(source)
+    local identifier = GetPlayerIdentifier(source)
+    if not identifier then return nil end
+
+    return identifier:gsub('[^%w_%-]', '_')
+end
+
+function GetPlayerJob(playerId)
+    if GetResourceState('qbx_core') == 'started' then
+        local player = exports.qbx_core:GetPlayer(playerId)
+        local job = player and player.PlayerData and player.PlayerData.job
+
+        if job then
+            return {
+                name = job.name,
+                type = job.type,
+                onduty = job.onduty
+            }
+        end
+    end
+
+    local identifierKey = GetSafeIdentifierKey(playerId)
+    if not identifierKey then return nil end
+
+    local rawData = LoadResourceFile(GetCurrentResourceName(), 'data/jobs/' .. identifierKey .. '.json')
+    local data = rawData and json.decode(rawData)
+
+    if data and data.job then
+        return {
+            name = data.job,
+            type = data.type or data.job,
+            onduty = data.onduty ~= false
+        }
+    end
+
+    return nil
+end
+
+RegisterCommand('blackmarket_setcred', function(source, args)
+    local targetId = tonumber(args[1])
+    local amount = tonumber(args[2])
+
+    if not targetId or amount == nil then
+        local usage = 'Usage: blackmarket_setcred [playerId] [0-' .. Config.Reputation.maxCred .. ']'
+        if source == 0 then
+            print(usage)
+        else
+            TriggerClientEvent('blackmarket:client:notify', source, 'Black Market Admin', usage, 'error')
+        end
+        return
+    end
+
+    if not GetPlayerName(targetId) then
+        local message = 'Player not found'
+        if source == 0 then
+            print(message)
+        else
+            TriggerClientEvent('blackmarket:client:notify', source, 'Black Market Admin', message, 'error')
+        end
+        return
+    end
+
+    SetPlayerCred(targetId, amount)
+    local clampedAmount = GetPlayerCred(targetId)
+    local message = string.format('Set %s (%d) street cred to %d', GetPlayerName(targetId), targetId, clampedAmount)
+
+    if source == 0 then
+        print('[BlackMarket] ' .. message)
+    else
+        TriggerClientEvent('blackmarket:client:notify', source, 'Black Market Admin', message, 'success')
+    end
+
+    TriggerClientEvent('blackmarket:client:notify', targetId, 'Street Cred', string.format('Your reputation is now %d/100', clampedAmount), 'inform')
+end, true)
 
 -- =============================================================================
 -- INITIALIZATION

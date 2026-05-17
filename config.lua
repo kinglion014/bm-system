@@ -286,6 +286,7 @@ Config.Reputation = {
 Config.Police = {
     alertRadius = 100.0, -- meters
     checkInterval = 1000, -- ms between checks during trades
+    requireOnDuty = true,
     
     -- Job names that count as police
     policeJobs = {
@@ -293,6 +294,11 @@ Config.Police = {
         ['sheriff'] = true,
         ['state'] = true,
         ['fbi'] = true
+    },
+
+    -- Qbox/QBX job types that count as police
+    policeJobTypes = {
+        ['leo'] = true
     },
     
     -- Warning messages

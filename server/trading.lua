@@ -3,6 +3,7 @@
 -- =============================================================================
 
 local ActiveTrades = {}
+local Trades = {}
 local PendingRequests = {}
 local TradeIdCounter = 0
 
@@ -90,6 +91,7 @@ RegisterNetEvent('blackmarket:server:acceptTrade', function(senderId)
         createdAt = os.time()
     }
     
+    Trades[tradeId] = trade
     ActiveTrades[senderId] = tradeId
     ActiveTrades[source] = tradeId
     
@@ -131,8 +133,10 @@ end)
 
 lib.callback.register('blackmarket:server:addTradeItem', function(source, tradeId, itemName, count)
     local playerTradeId = ActiveTrades[source]
+    tradeId = tonumber(tradeId)
+    count = tonumber(count) or 0
     
-    if not playerTradeId or playerTradeId ~= tradeId then
+    if count <= 0 or not playerTradeId or playerTradeId ~= tradeId then
         return false
     end
     
@@ -182,8 +186,10 @@ end)
 
 lib.callback.register('blackmarket:server:removeTradeItem', function(source, tradeId, itemName, count)
     local playerTradeId = ActiveTrades[source]
+    tradeId = tonumber(tradeId)
+    count = tonumber(count) or 0
     
-    if not playerTradeId or playerTradeId ~= tradeId then
+    if count <= 0 or not playerTradeId or playerTradeId ~= tradeId then
         return false
     end
     
@@ -222,6 +228,7 @@ end)
 
 lib.callback.register('blackmarket:server:confirmTrade', function(source, tradeId)
     local playerTradeId = ActiveTrades[source]
+    tradeId = tonumber(tradeId)
     
     if not playerTradeId or playerTradeId ~= tradeId then
         return false, 'Invalid trade.'
@@ -315,6 +322,7 @@ function ExecuteTrade(trade)
     -- Clean up
     ActiveTrades[trade.player1] = nil
     ActiveTrades[trade.player2] = nil
+    Trades[trade.id] = nil
     
     return true, 'Trade completed!'
 end
@@ -326,6 +334,7 @@ end
 RegisterNetEvent('blackmarket:server:cancelTrade', function(tradeId)
     local source = source
     local playerTradeId = ActiveTrades[source]
+    tradeId = tonumber(tradeId)
     
     if playerTradeId and playerTradeId == tradeId then
         local trade = GetTradeById(tradeId)
@@ -341,6 +350,7 @@ function CancelTradeInternal(trade, reason)
     
     ActiveTrades[trade.player1] = nil
     ActiveTrades[trade.player2] = nil
+    Trades[trade.id] = nil
 end
 
 -- =============================================================================
@@ -348,17 +358,7 @@ end
 -- =============================================================================
 
 function GetTradeById(tradeId)
-    for playerId, tid in pairs(ActiveTrades) do
-        if tid == tradeId then
-            -- Find the trade object
-            for _, t in pairs(ActiveTrades) do
-                if type(t) == 'table' and t.id == tradeId then
-                    return t
-                end
-            end
-        end
-    end
-    return nil
+    return Trades[tonumber(tradeId)]
 end
 
 function UpdateTradeClients(trade)
@@ -400,4 +400,8 @@ end)
 
 exports('getActiveTrades', function()
     return ActiveTrades
+end)
+
+exports('getTrades', function()
+    return Trades
 end)

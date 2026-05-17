@@ -62,6 +62,27 @@ function LogEvent(eventType, data)
     SaveResourceFile(GetCurrentResourceName(), LogFile, newLog, -1)
 end
 
+function LogTransaction(playerId, transactionType, data)
+    data = data or {}
+
+    if transactionType == 'PURCHASE' then
+        LogPurchase({
+            playerName = GetPlayerName(playerId),
+            playerId = playerId,
+            quantity = data.quantity,
+            itemName = data.item,
+            totalPrice = data.price
+        })
+        return
+    end
+
+    LogEvent(transactionType or 'transaction', {
+        playerName = GetPlayerName(playerId),
+        playerId = playerId,
+        data = data
+    })
+end
+
 -- =============================================================================
 -- EXPORTS
 -- =============================================================================
@@ -69,3 +90,4 @@ end
 exports('logTrade', LogTrade)
 exports('logPurchase', LogPurchase)
 exports('logEvent', LogEvent)
+exports('logTransaction', LogTransaction)
